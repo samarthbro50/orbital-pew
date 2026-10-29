@@ -33,6 +33,12 @@ let roundWinner = null;
 let previousStep = Date.now();
 let tick = 0;
 
+app.use((req, res, next) => {
+  if (req.method === "GET" && (req.path === "/" || req.path.endsWith(".html") || req.path.endsWith(".js"))) {
+    res.setHeader("Cache-Control", "no-store");
+  }
+  next();
+});
 app.use(express.static(path.join(__dirname, "public")));
 app.get("/vendor/three.module.js", (req, res) => {
   res.sendFile(path.join(__dirname, "node_modules", "three", "build", "three.module.js"));

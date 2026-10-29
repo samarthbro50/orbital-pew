@@ -250,6 +250,60 @@
   </section>
 
   <script src="/socket.io/socket.io.js"></script>
-  <script type="module" src="/game.js"></script>
+  <script>
+    (() => {
+      const joinButton = document.getElementById("joinBtn");
+      const lobbyError = document.getElementById("lobbyError");
+      let gameReady = false;
+      window.orbitalGameReady = false;
+
+      const showBootFailure = () => {
+        if (gameReady) return;
+        lobbyError.textContent = "The 3D arena failed to load. Tap to try again.";
+        joinButton.disabled = false;
+        joinButton.textContent = "RELOAD THE ARENA";
+        joinButton.onclick = () => window.location.reload();
+      };
+
+      if (typeof io !== "function") {
+        showBootFailure();
+        return;
+      }
+
+      const socket = window.orbitalSocket = io({ reconnection: true, reconnectionDelayMax: 3000 });
+      const updateButton = () => {
+        if (!gameReady) {
+          joinButton.disabled = true;
+          joinButton.textContent = socket.connected ? "LOADING THE ARENA…" : "CONNECTING TO THE MOON…";
+          return;
+        }
+        joinButton.disabled = !socket.connected;
+        joinButton.textContent = socket.connected ? "DROP INTO THE ARENA" : "RECONNECTING TO THE MOON…";
+      };
+
+      socket.on("connect", () => {
+        lobbyError.textContent = "";
+        updateButton();
+      });
+      socket.on("disconnect", () => {
+        if (gameReady) lobbyError.textContent = "Moon link lost. Reconnecting…";
+        updateButton();
+      });
+      socket.on("connect_error", () => {
+        lobbyError.textContent = "Can't reach the game server. Retrying…";
+        updateButton();
+      });
+      window.addEventListener("orbital-game-ready", () => {
+        gameReady = true;
+        window.orbitalGameReady = true;
+        updateButton();
+      });
+      window.addEventListener("error", showBootFailure, true);
+      window.addEventListener("unhandledrejection", showBootFailure);
+      window.setTimeout(showBootFailure, 12000);
+      updateButton();
+    })();
+  </script>
+  <script type="module" src="/game.js?v=20261029-2"></script>
 </body>
 </html>

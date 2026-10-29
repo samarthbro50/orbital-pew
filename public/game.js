@@ -1,6 +1,6 @@
-import * as THREE from "/vendor/three.module.js";
+import * as THREE from "/vendor/three.module.js?v=20261029-2";
 
-const socket = io({ reconnection: true, reconnectionDelayMax: 3000 });
+const socket = window.orbitalSocket || io({ reconnection: true, reconnectionDelayMax: 3000 });
 const canvas = document.getElementById("world");
 const lobby = document.getElementById("lobby");
 const lobbyError = document.getElementById("lobbyError");
@@ -360,8 +360,8 @@ document.getElementById("againBtn").addEventListener("click", () => socket.emit(
 socket.on("connect", () => {
   connLabel.textContent = "SERVER LIVE";
   connDot.classList.add("online");
-  joinBtn.disabled = false;
-  if (!joined) joinBtn.textContent = "DROP INTO THE ARENA";
+  joinBtn.disabled = !window.orbitalGameReady;
+  if (!joined && window.orbitalGameReady) joinBtn.textContent = "DROP INTO THE ARENA";
   lobbyError.textContent = "";
 });
 socket.on("disconnect", () => {
@@ -563,3 +563,4 @@ function animate(now) {
   renderer.render(scene, camera);
 }
 requestAnimationFrame(animate);
+window.dispatchEvent(new Event("orbital-game-ready"));
