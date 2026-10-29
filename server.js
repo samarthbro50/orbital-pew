@@ -1,3 +1,4 @@
+
 "use strict";
 
 const path = require("node:path");
@@ -29,9 +30,11 @@ const COLORS = [
 
 const players = new Map();
 const pendingStrikes = [];
+const powerUps = new Map(); // Tracks active floating power-ups
 let roundWinner = null;
 let previousStep = Date.now();
 let tick = 0;
+let lastPowerUpSpawn = Date.now();
 
 app.use((req, res, next) => {
   if (req.method === "GET" && (req.path === "/" || req.path.endsWith(".html") || req.path.endsWith(".js"))) {
@@ -80,8 +83,27 @@ function makePlayer(id, name) {
     cooldownUntil: 0,
     gunCooldownUntil: 0,
     jumpHeld: false,
+    activePowerUp: null,
+    powerUpExpiresAt: 0,
     input: { x: 0, z: 0, jump: false, yaw: 0 }
   };
+}
+
+function spawnPowerUp() {
+  if (powerUps.size >= 4) return; // Keep map clean
+  const angle = Math.random() * Math.PI * 2;
+  const radius = Math.random() * (ARENA_RADIUS - 4);
+  const id = "pwr-" + Math.random().toString(36).substring(2, 9);
+  
+  const powerUp = {
+    id,
+    x: Math.cos(angle) * radius,
+    z: Math.sin(angle) * radius,
+    type: Math.random() > 0.5 ? "SPEED_BOOST" : "MEGA_BLAST"
+  };
+  
+  powerUps.set(id, powerUp);
+  io.emit("powerUpSpawned", powerUp);
 }
 
 function roster() {
@@ -102,8 +124,10 @@ function snapshot() {
       score: p.score,
       alive: p.alive,
       cooldown: Math.max(0, p.cooldownUntil - now),
-      gunCooldown: Math.max(0, p.gunCooldownUntil - now)
+      gunCooldown: Math.max(0, p.gunCooldownUntil - now),
+      activePowerUp: p.activePowerUp
     })),
+    powerUps: Array.from(powerUps.values()),
     count: players.size,
     max: MAX_PLAYERS,
     winner: roundWinner
@@ -121,6 +145,7 @@ function eliminate(p, now) {
   p.vx = 0;
   p.vy = 0;
   p.vz = 0;
+  p.activePowerUp = null;
 
   const attacker = p.lastHitBy && players.get(p.lastHitBy);
   if (attacker && attacker.id !== p.id && now - p.lastHitAt < 8000) {
@@ -144,14 +169,22 @@ function detonate(strike, now) {
     ownerName: strike.ownerName
   });
 
+  // Screen shake event trigger sent to client views
+  io.emit("shakeCamera", { x: strike.x, z: strike.z, radius: 25 });
+
   for (const p of players.values()) {
     if (!p.alive) continue;
     const dx = p.x - strike.x;
     const dz = p.z - strike.z;
     const distance = Math.hypot(dx, dz);
-    if (distance > STRIKE_RADIUS) continue;
+    
+    // Check if the attacker has a active blast modifier
+    const attacker = players.get(strike.by);
+    const dynamicRadius = (attacker && attacker.activePowerUp === "MEGA_BLAST") ? STRIKE_RADIUS * 1.5 : STRIKE_RADIUS;
+    
+    if (distance > dynamicRadius) continue;
 
-    const strength = 1 - distance / STRIKE_RADIUS;
+    const strength = 1 - distance / dynamicRadius;
     let nx = dx / Math.max(distance, 0.2);
     let nz = dz / Math.max(distance, 0.2);
     if (distance < 0.2) {
@@ -159,9 +192,11 @@ function detonate(strike, now) {
       nx = Math.cos(fallback);
       nz = Math.sin(fallback);
     }
-    p.vx += nx * (9 + strength * 15);
-    p.vz += nz * (9 + strength * 15);
-    p.vy += 8 + strength * 7;
+    
+    const modifier = (attacker && attacker.activePowerUp === "MEGA_BLAST") ? 1.6 : 1.0;
+    p.vx += nx * (9 + strength * 15) * modifier;
+    p.vz += nz * (9 + strength * 15) * modifier;
+    p.vy += (8 + strength * 7) * modifier;
     p.lastHitBy = strike.by;
     p.lastHitAt = now;
   }
@@ -170,6 +205,12 @@ function detonate(strike, now) {
 function step(now) {
   const dt = Math.min(0.05, Math.max(0.001, (now - previousStep) / 1000));
   previousStep = now;
+
+  // Power-up generation timer check
+  if (now - lastPowerUpSpawn > 12000) {
+    spawnPowerUp();
+    lastPowerUpSpawn = now;
+  }
 
   for (let i = pendingStrikes.length - 1; i >= 0; i -= 1) {
     if (pendingStrikes[i].detonateAt <= now) {
@@ -198,6 +239,22 @@ function step(now) {
       continue;
     }
 
+    // Power-up duration tracking
+    if (p.activePowerUp && now >= p.powerUpExpiresAt) {
+      p.activePowerUp = null;
+    }
+
+    // Collision detection with available floating pickups
+    for (const [id, item] of powerUps.entries()) {
+      if (Math.hypot(p.x - item.x, p.z - item.z) < 1.4) {
+        p.activePowerUp = item.type;
+        p.powerUpExpiresAt = now + 7000; // Powerup lasts 7 seconds
+        powerUps.delete(id);
+        io.emit("powerUpCollected", { id, playerId: p.id, type: item.type });
+        announce(p.name + " picked up " + item.type.replace("_", " ") + "!");
+      }
+    }
+
     let ix = p.input.x;
     let iz = p.input.z;
     const inputLength = Math.hypot(ix, iz);
@@ -206,16 +263,20 @@ function step(now) {
       iz /= inputLength;
     }
 
-    p.vx += ix * 24 * dt;
-    p.vz += iz * 24 * dt;
+    // Double movement forces if user currently holds a SPEED_BOOST item
+    const speedMultiplier = p.activePowerUp === "SPEED_BOOST" ? 1.75 : 1.0;
+
+    p.vx += ix * 24 * speedMultiplier * dt;
+    p.vz += iz * 24 * speedMultiplier * dt;
     const drag = Math.exp(-2.5 * dt);
     p.vx *= drag;
     p.vz *= drag;
 
     const speed = Math.hypot(p.vx, p.vz);
-    if (speed > 8.3) {
-      p.vx = (p.vx / speed) * 8.3;
-      p.vz = (p.vz / speed) * 8.3;
+    const maxVelocityLimit = 8.3 * speedMultiplier;
+    if (speed > maxVelocityLimit) {
+      p.vx = (p.vx / speed) * maxVelocityLimit;
+      p.vz = (p.vz / speed) * maxVelocityLimit;
     }
 
     if (p.input.jump && !p.jumpHeld && p.y <= 0.02) {
@@ -247,6 +308,10 @@ function step(now) {
   tick += 1;
   if (tick % 3 === 0) snapshot();
 }
+
+setInterval(() => {
+  step(Date.now());
+}, 16);
 
 io.on("connection", (socket) => {
   socket.emit("roster", { count: players.size, max: MAX_PLAYERS });
@@ -294,135 +359,3 @@ io.on("connection", (socket) => {
       return;
     }
 
-    const now = Date.now();
-    if (now < p.cooldownUntil) {
-      socket.emit("strikeError", { message: "Orbital cannon is recharging." });
-      return;
-    }
-
-    p.cooldownUntil = now + STRIKE_COOLDOWN_MS;
-    const id = socket.id + "-" + now;
-    const strike = {
-      id,
-      by: socket.id,
-      ownerName: p.name,
-      x,
-      z,
-      detonateAt: now + STRIKE_DELAY_MS
-    };
-    pendingStrikes.push(strike);
-    io.emit("strikeWarning", {
-      id,
-      x,
-      z,
-      by: socket.id,
-      ownerName: p.name,
-      detonateAt: strike.detonateAt
-    });
-  });
-
-  socket.on("shoot", () => {
-    const p = players.get(socket.id);
-    if (!p || !p.alive || roundWinner) return;
-    const now = Date.now();
-    if (now < p.gunCooldownUntil) return;
-    p.gunCooldownUntil = now + 460;
-
-    const fx = Math.sin(p.yaw);
-    const fz = Math.cos(p.yaw);
-    let target = null;
-    let bestDistance = 22;
-    for (const q of players.values()) {
-      if (q.id === p.id || !q.alive) continue;
-      const dx = q.x - p.x;
-      const dz = q.z - p.z;
-      const distance = Math.hypot(dx, dz);
-      if (distance < 0.8 || distance >= bestDistance || Math.abs(q.y - p.y) > 3.2) continue;
-      const bearing = Math.atan2(dx, dz);
-      const difference = Math.atan2(Math.sin(bearing - p.yaw), Math.cos(bearing - p.yaw));
-      if (Math.abs(difference) > 0.24) continue;
-      target = q;
-      bestDistance = distance;
-    }
-
-    let end = { x: p.x + fx * 22, y: p.y + 1.15, z: p.z + fz * 22 };
-    if (target) {
-      target.vx += fx * 11;
-      target.vz += fz * 11;
-      target.vy += 4.2;
-      target.lastHitBy = p.id;
-      target.lastHitAt = now;
-      end = { x: target.x, y: target.y + 1.15, z: target.z };
-    }
-    io.emit("shot", {
-      from: { x: p.x + fx * 0.65, y: p.y + 1.1, z: p.z + fz * 0.65 },
-      to: end,
-      hit: target ? target.id : null,
-      by: p.id
-    });
-  });
-
-  socket.on("shoot", () => {
-    const p = players.get(socket.id);
-    if (!p || !p.alive || roundWinner) return;
-    const now = Date.now();
-    if (now < p.gunCooldownUntil) return;
-    p.gunCooldownUntil = now + 460;
-    const fx = Math.sin(p.yaw), fz = Math.cos(p.yaw);
-    let target = null, best = 22;
-    for (const q of players.values()) {
-      if (q.id === p.id || !q.alive) continue;
-      const dx = q.x - p.x, dz = q.z - p.z, d = Math.hypot(dx, dz);
-      if (d < 0.8 || d >= best || Math.abs(q.y - p.y) > 3.2) continue;
-      const bearing = Math.atan2(dx, dz);
-      const diff = Math.atan2(Math.sin(bearing - p.yaw), Math.cos(bearing - p.yaw));
-      if (Math.abs(diff) > 0.24) continue;
-      target = q; best = d;
-    }
-    let end = { x: p.x + fx * 22, y: p.y + 1.15, z: p.z + fz * 22 };
-    if (target) {
-      target.vx += fx * 11; target.vz += fz * 11; target.vy += 4.2;
-      target.lastHitBy = p.id; target.lastHitAt = now;
-      end = { x: target.x, y: target.y + 1.15, z: target.z };
-    }
-    io.emit("shot", { from: { x: p.x + fx * 0.65, y: p.y + 1.1, z: p.z + fz * 0.65 }, to: end, hit: target ? target.id : null, by: p.id });
-  });
-
-  socket.on("restart", () => {
-    if (!roundWinner) return;
-    roundWinner = null;
-    for (const p of players.values()) {
-      p.score = 0;
-      p.alive = true;
-      p.respawnAt = 0;
-      p.lastHitBy = null;
-      p.lastHitAt = 0;
-      p.cooldownUntil = 0;
-      p.vx = 0;
-      p.vy = 0;
-      p.vz = 0;
-      const point = spawnPoint();
-      p.x = point.x;
-      p.z = point.z;
-      p.y = 0;
-    }
-    announce("New round! First to five launches wins.");
-    snapshot();
-  });
-
-  socket.on("disconnect", () => {
-    const p = players.get(socket.id);
-    if (!p) return;
-    players.delete(socket.id);
-    if (roundWinner && roundWinner.id === socket.id) roundWinner = null;
-    announce(p.name + " left the moon.");
-    roster();
-    snapshot();
-  });
-});
-
-setInterval(() => step(Date.now()), 1000 / 60);
-
-server.listen(PORT, "0.0.0.0", () => {
-  console.log("Orbital Paws listening on port " + PORT);
-});
