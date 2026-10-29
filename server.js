@@ -40,9 +40,7 @@ app.use((req, res, next) => {
   next();
 });
 app.use(express.static(path.join(__dirname, "public")));
-app.get("/vendor/three.module.js", (req, res) => {
-  res.sendFile(path.join(__dirname, "node_modules", "three", "build", "three.module.js"));
-});
+app.use("/vendor", express.static(path.join(__dirname, "node_modules", "three", "build")));
 app.get("/healthz", (req, res) => {
   res.json({ ok: true, players: players.size, maxPlayers: MAX_PLAYERS });
 });
