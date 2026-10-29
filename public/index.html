@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#150b18">
+  <meta name="description" content="A 20-player 3D cat arena. Pew pew your rivals, then call down an orbital bonk.">
+  <title>Orbital Paws — Star Cat Showdown</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='80'%3E%F0%9F%90%BE%3C/text%3E%3C/svg%3E">
+  <style>
+    :root {
+      color-scheme: dark;
+      --ink: #fff2ea;
+      --muted: #c6aeb6;
+      --rose: #ff706e;
+      --pink: #ffb1a6;
+      --gold: #ffd888;
+      --glass: rgba(28, 12, 25, .76);
+      --line: rgba(255, 218, 211, .16);
+    }
+    * { box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+    body {
+      background: #180c1a;
+      color: var(--ink);
+      font-family: Inter, ui-rounded, "Segoe UI", system-ui, sans-serif;
+      letter-spacing: .01em;
+      user-select: none;
+    }
+    button, input { font: inherit; }
+    button { color: inherit; }
+    #stage { position: fixed; inset: 0; overflow: hidden; }
+    #world { display: block; width: 100%; height: 100%; outline: none; cursor: crosshair; }
+    .hidden { display: none !important; }
+    .hud { position: fixed; z-index: 2; pointer-events: none; }
+    #topbar {
+      inset: 0 0 auto;
+      height: 84px;
+      padding: 16px 22px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: linear-gradient(180deg, rgba(26, 9, 20, .76), rgba(26, 9, 20, 0));
+    }
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .brand-mark {
+      width: 44px; height: 44px; border-radius: 15px;
+      display: grid; place-items: center; font-size: 23px;
+      background: linear-gradient(145deg, #ff956f, #ff5979);
+      box-shadow: 0 0 30px rgba(255, 90, 103, .3);
+    }
+    .brand-name { font-weight: 950; letter-spacing: .11em; font-size: 14px; }
+    .brand-sub { color: #d1abb6; font-size: 10px; font-weight: 800; letter-spacing: .19em; margin-top: 3px; }
+    .top-right { display: flex; gap: 10px; align-items: center; }
+    .pill {
+      border: 1px solid var(--line); border-radius: 999px;
+      background: rgba(37, 16, 31, .72); backdrop-filter: blur(12px);
+      padding: 9px 13px; display: flex; gap: 8px; align-items: center;
+      color: #f5dce0; font-size: 11px; font-weight: 850; letter-spacing: .1em;
+    }
+    #connDot { width: 8px; height: 8px; border-radius: 50%; background: #e88686; box-shadow: 0 0 12px currentColor; }
+    #connDot.online { background: #7de5b8; }
+    #playerCount { color: white; font-size: 14px; letter-spacing: 0; }
+    #leaderboard {
+      top: 98px; right: 20px; width: 210px; max-height: min(48vh, 400px);
+      overflow: hidden; border: 1px solid var(--line); border-radius: 18px;
+      background: rgba(28, 12, 25, .64); backdrop-filter: blur(12px); padding: 12px;
+    }
+    .panel-title { display: flex; justify-content: space-between; align-items: center; color: #e5c7cd; font-size: 10px; font-weight: 900; letter-spacing: .16em; margin-bottom: 8px; }
+    #leaderRows { overflow: auto; max-height: calc(min(48vh, 400px) - 54px); scrollbar-width: thin; }
+    .leader-row { display: flex; align-items: center; gap: 8px; padding: 6px 4px; border-top: 1px solid rgba(255,255,255,.055); font-size: 12px; }
+    .leader-row.me { color: #fff; background: rgba(255, 115, 122, .12); border-radius: 8px; }
+    .leader-row .dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
+    .leader-row .who { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; flex: 1; }
+    .leader-row .pts { color: var(--gold); font-weight: 950; font-variant-numeric: tabular-nums; }
+    #bottomHud {
+      left: 20px; right: 20px; bottom: max(18px, env(safe-area-inset-bottom));
+      display: flex; justify-content: space-between; align-items: end; gap: 14px;
+    }
+    .glass {
+      border: 1px solid var(--line); border-radius: 18px;
+      background: var(--glass); backdrop-filter: blur(14px);
+      box-shadow: 0 12px 40px rgba(10, 3, 11, .2);
+    }
+    #controls { padding: 12px 15px; color: #f4dfe1; font-size: 11px; line-height: 1.65; }
+    #controls strong { color: white; }
+    .key {
+      display: inline-block; min-width: 22px; text-align: center;
+      padding: 1px 5px; margin: 0 2px; border: 1px solid rgba(255,255,255,.22);
+      border-bottom-width: 2px; border-radius: 5px; color: #fff4ec;
+      font-size: 9px; font-weight: 900; line-height: 1.6;
+    }
+    #weaponPanel { width: min(430px, 52vw); padding: 11px; pointer-events: auto; }
+    #weapons { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .weapon-btn {
+      min-height: 56px; border: 1px solid rgba(255,255,255,.14); border-radius: 13px;
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      padding: 9px 12px; text-align: left; cursor: pointer; transition: transform .15s, filter .15s;
+      background: linear-gradient(135deg, rgba(255,126,106,.28), rgba(116,54,84,.5));
+    }
+    .weapon-btn:hover:not(:disabled) { transform: translateY(-2px); filter: brightness(1.14); }
+    .weapon-btn:disabled { opacity: .65; cursor: not-allowed; }
+    .weapon-btn .weapon-title { display: block; font-size: 10px; letter-spacing: .11em; font-weight: 950; }
+    .weapon-btn .weapon-info { display: block; margin-top: 3px; color: #e8c8cb; font-size: 9px; }
+    .weapon-btn .symbol { font-size: 21px; }
+    #gunBtn { background: linear-gradient(135deg, rgba(108,183,255,.26), rgba(63,55,117,.54)); }
+    #weaponStatus { margin-top: 8px; text-align: right; font-size: 10px; color: #e7cdd2; letter-spacing: .08em; min-height: 14px; }
+    #lobby, #roundEnd, #fullScreen {
+      position: fixed; inset: 0; z-index: 5; display: grid; place-items: center;
+      padding: 20px; background:
+        radial-gradient(ellipse at 50% 43%, rgba(83, 20, 45, .25), transparent 55%),
+        linear-gradient(180deg, rgba(19, 8, 20, .18), rgba(19, 8, 20, .54));
+    }
+    .card {
+      width: min(100%, 460px); border: 1px solid rgba(255, 223, 214, .2);
+      border-radius: 26px; padding: 30px; background: rgba(27, 11, 25, .86);
+      box-shadow: 0 26px 100px rgba(8, 4, 10, .5), inset 0 1px rgba(255,255,255,.07);
+      backdrop-filter: blur(22px); text-align: center;
+    }
+    .eyebrow { color: #ffb0a4; font-size: 10px; font-weight: 950; letter-spacing: .21em; }
+    .hero-cat { font-size: 46px; line-height: 1; margin: 16px auto 11px; filter: drop-shadow(0 8px 17px rgba(255, 99, 114, .35)); }
+    h1 { margin: 0; font-size: clamp(29px, 7vw, 45px); font-weight: 1000; letter-spacing: -.045em; line-height: .98; }
+    h1 span { color: #ff8f81; }
+    .intro { max-width: 340px; margin: 14px auto 22px; color: #d4bac1; font-size: 13px; line-height: 1.55; }
+    .lobby-stats { display: flex; justify-content: center; gap: 8px; margin: 0 0 21px; }
+    .lobby-stat { min-width: 112px; padding: 10px 12px; border-radius: 13px; background: rgba(255,255,255,.055); color: #f4dce0; }
+    .lobby-stat b { display: block; color: white; font-size: 16px; letter-spacing: .02em; }
+    .lobby-stat small { display: block; margin-top: 2px; color: #bba3ab; font-size: 9px; font-weight: 850; letter-spacing: .13em; }
+    #nameInput {
+      width: 100%; height: 47px; padding: 0 14px; margin-bottom: 10px;
+      border: 1px solid rgba(255,255,255,.17); border-radius: 12px; outline: none;
+      color: white; background: rgba(8, 6, 14, .6); text-align: center; font-weight: 750;
+    }
+    #nameInput:focus { border-color: rgba(255, 143, 129, .75); box-shadow: 0 0 0 3px rgba(255,143,129,.12); }
+    #joinBtn, #againBtn {
+      width: 100%; min-height: 49px; border: 0; border-radius: 12px;
+      color: #31151d; font-size: 12px; font-weight: 1000; letter-spacing: .12em;
+      cursor: pointer; background: linear-gradient(110deg, #ffd38c, #ff8b83);
+      box-shadow: 0 8px 24px rgba(255, 119, 108, .24);
+    }
+    #joinBtn:disabled { filter: grayscale(.65); opacity: .65; cursor: not-allowed; }
+    .fineprint { margin: 14px 0 0; color: #a98e98; font-size: 10px; line-height: 1.55; }
+    #lobbyError { min-height: 18px; margin-top: 8px; color: #ffaea6; font-size: 11px; font-weight: 750; }
+    #toast {
+      position: fixed; z-index: 4; top: 94px; left: 50%; transform: translateX(-50%);
+      max-width: min(88vw, 500px); padding: 10px 16px; border: 1px solid var(--line);
+      border-radius: 999px; color: white; font-size: 12px; font-weight: 850;
+      background: rgba(29, 12, 26, .82); box-shadow: 0 8px 32px rgba(0,0,0,.25);
+      opacity: 0; transition: opacity .2s;
+    }
+    #toast.show { opacity: 1; }
+    #roundEnd .card { border-color: rgba(255, 210, 145, .35); }
+    #roundName { color: #ffd98e; }
+    #fullScreen .card { max-width: 400px; }
+    @media (max-width: 700px) {
+      #topbar { padding: 12px 12px; height: 68px; }
+      .brand-mark { width: 38px; height: 38px; border-radius: 13px; }
+      .brand-name { font-size: 11px; }
+      .brand-sub { font-size: 8px; letter-spacing: .12em; }
+      .top-right { gap: 5px; }
+      .pill { padding: 8px 10px; font-size: 9px; }
+      #leaderboard { top: 77px; right: 9px; width: 155px; max-height: 30vh; padding: 9px; }
+      #leaderRows { max-height: calc(30vh - 47px); }
+      .leader-row { font-size: 10px; }
+      #bottomHud { left: 9px; right: 9px; bottom: max(9px, env(safe-area-inset-bottom)); gap: 7px; }
+      #controls { max-width: 38%; padding: 9px 10px; font-size: 9px; }
+      #weaponPanel { width: 62%; padding: 8px; }
+      .weapon-btn { min-height: 50px; padding: 7px 8px; }
+      .weapon-btn .weapon-title { font-size: 8px; }
+      .weapon-btn .weapon-info { font-size: 8px; }
+      .weapon-btn .symbol { font-size: 17px; }
+      #weaponStatus { font-size: 8px; }
+      .card { padding: 23px 19px; }
+    }
+  </style>
+</head>
+<body>
+  <div id="stage"><canvas id="world" aria-label="Three-dimensional cat arena"></canvas></div>
+
+  <div id="topbar" class="hud hidden">
+    <div class="brand">
+      <div class="brand-mark">🐾</div>
+      <div><div class="brand-name">ORBITAL PAWS</div><div class="brand-sub">STAR CAT SHOWDOWN</div></div>
+    </div>
+    <div class="top-right">
+      <div class="pill"><span id="connDot"></span><span id="connLabel">CONNECTING</span></div>
+      <div class="pill"><span id="playerCount">0</span><span>/ 20 PILOTS</span></div>
+    </div>
+  </div>
+
+  <aside id="leaderboard" class="hud hidden">
+    <div class="panel-title"><span>TOP PILOTS</span><span id="goalLabel">FIRST TO 5</span></div>
+    <div id="leaderRows"></div>
+  </aside>
+
+  <div id="bottomHud" class="hud hidden">
+    <div id="controls" class="glass">
+      <strong>MOVE</strong> <span class="key">W</span><span class="key">A</span><span class="key">S</span><span class="key">D</span><br>
+      <strong>HOP</strong> <span class="key">SPACE</span><br>
+      <strong>AIM</strong> mouse · <strong>PEW</strong> click<br>
+      <strong>ORBITAL</strong> right-click
+    </div>
+    <div id="weaponPanel" class="glass">
+      <div id="weapons">
+        <button id="gunBtn" class="weapon-btn" type="button" aria-label="Fire blaster">
+          <span><span class="weapon-title">PEW-PEW BLASTER</span><span class="weapon-info">Click · quick knockback</span></span>
+          <span class="symbol">⚡</span>
+        </button>
+        <button id="strikeBtn" class="weapon-btn" type="button" aria-label="Call orbital strike">
+          <span><span class="weapon-title">ORBITAL BONK</span><span class="weapon-info">Right-click · big boom</span></span>
+          <span class="symbol">☄️</span>
+        </button>
+      </div>
+      <div id="weaponStatus">Pew at a rival or mark a landing spot.</div>
+    </div>
+  </div>
+
+  <div id="toast" role="status"></div>
+
+  <section id="lobby">
+    <div class="card">
+      <div class="eyebrow">ONE MOON · UP TO 20 CAT PILOTS</div>
+      <div class="hero-cat" aria-hidden="true">🐈‍⬛</div>
+      <h1>ORBITAL<br><span>PAWS</span></h1>
+      <p class="intro">A tiny 3D space arena. Pew your friends with a pocket blaster, then call in a sky-sized bonk.</p>
+      <div class="lobby-stats">
+        <div class="lobby-stat"><b id="lobbyCount">0 / 20</b><small>IN THE ARENA</small></div>
+        <div class="lobby-stat"><b>FIRST TO 5</b><small>WINS THE MOON</small></div>
+      </div>
+      <input id="nameInput" maxlength="16" autocomplete="nickname" placeholder="Your cat pilot name" aria-label="Cat pilot name">
+      <button id="joinBtn" type="button" disabled>CONNECTING TO THE MOON…</button>
+      <div id="lobbyError" role="status"></div>
+      <p class="fineprint">WASD to move · Space to hop · Click to pew · Right-click for the orbital cannon</p>
+    </div>
+  </section>
+
+  <section id="roundEnd" class="hidden">
+    <div class="card">
+      <div class="hero-cat" aria-hidden="true">🏆</div>
+      <div class="eyebrow">MOON CHAMPION</div>
+      <h1 id="roundName">STAR CAT</h1>
+      <p class="intro">Five rivals launched. That moon belongs to you.</p>
+      <button id="againBtn" type="button">PLAY ANOTHER ROUND</button>
+      <p class="fineprint">Everyone in the arena can start the next round.</p>
+    </div>
+  </section>
+
+  <section id="fullScreen" class="hidden">
+    <div class="card"><div class="hero-cat" aria-hidden="true">🌕</div><h1>MOON IS FULL</h1><p class="intro">All 20 pilot spots are taken. Try again in a moment.</p></div>
+  </section>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script type="module" src="/game.js"></script>
+</body>
+</html>
